@@ -21,9 +21,12 @@ mkdir -p "$RESOURCES"
 # Copy binary
 cp CrossDropBar "$MACOS/"
 
-# Copy AppIcon
+# Copy AppIcon & Sounds
 if [ -f "AppIcon.icns" ]; then
     cp AppIcon.icns "$RESOURCES/"
+fi
+if [ -f "tuturu.aiff" ]; then
+    cp tuturu.aiff "$RESOURCES/"
 fi
 
 # Bundle signal server and web frontend into app resources

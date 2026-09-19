@@ -380,7 +380,10 @@ function handleIncomingData(data, senderId) {
 }
 
 async function completeReception(rec) {
-  playSuccessSound();
+  // If running inside Mac native app, Swift's playTuturuSound handles audio directly
+  if (!window.webkit || !window.webkit.messageHandlers || !window.webkit.messageHandlers.crossdropNative) {
+    playSuccessSound();
+  }
   const blob = new Blob(rec.chunks, { type: rec.mime || 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
 
@@ -636,6 +639,17 @@ function hideTransferUI() {
 }
 
 function playSuccessSound() {
+  try {
+    const audio = new Audio('/tuturu.mp3');
+    audio.play().catch(() => {
+      playSynthChime();
+    });
+  } catch (e) {
+    playSynthChime();
+  }
+}
+
+function playSynthChime() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();

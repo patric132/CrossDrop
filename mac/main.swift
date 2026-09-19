@@ -356,7 +356,7 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
                let size = dict["size"] as? Int {
                 DispatchQueue.main.async {
                     self.showSystemNotification(title: "收到檔案！⚡", body: "\(name) (\(self.formatBytes(size))) 已存入 Documents/CrossDrop_Received")
-                    NSSound(named: "Glass")?.play()
+                    self.playTuturuSound()
                 }
             }
 
@@ -406,16 +406,29 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
             try data.write(to: targetFile)
             print("[CrossDrop Mac] Saved file to: \(targetFile.path)")
             showSystemNotification(title: "收到檔案！⚡", body: "\(name) (\(formatBytes(data.count))) 已存入 Documents/CrossDrop_Received")
-            NSSound(named: "Glass")?.play()
+            playTuturuSound()
         } catch {
             print("[CrossDrop Mac] Failed to save file: \(error)")
         }
     }
 
+    func playTuturuSound() {
+        if let sound = NSSound(named: "tuturu") {
+            sound.play()
+            return
+        }
+        if let resPath = Bundle.main.path(forResource: "tuturu", ofType: "aiff"),
+           let sound = NSSound(contentsOfFile: resPath, byReference: true) {
+            sound.play()
+            return
+        }
+        NSSound(named: "Glass")?.play()
+    }
+
     func showSystemNotification(title: String, body: String) {
         let cleanTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
         let cleanBody = body.replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "display notification \"\(cleanBody)\" with title \"\(cleanTitle)\" sound name \"Glass\""
+        let script = "display notification \"\(cleanBody)\" with title \"\(cleanTitle)\""
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]
