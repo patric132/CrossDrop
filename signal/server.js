@@ -46,6 +46,42 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Direct file save endpoint for Mac (stream file directly to Documents/CrossDrop_Received)
+  if (req.method === 'POST' && req.url === '/api/save-file') {
+    const rawName = decodeURIComponent(req.headers['x-filename'] || 'received_file');
+    const safeName = path.basename(rawName).replace(/[/\\?%*:|"<>]/g, '_') || 'received_file';
+    const homeDir = process.env.HOME || '/Users/' + (process.env.USER || 'patric132');
+    const targetDir = path.join(homeDir, 'Documents', 'CrossDrop_Received');
+    try {
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+    } catch (e) {}
+
+    let targetPath = path.join(targetDir, safeName);
+    let counter = 1;
+    const ext = path.extname(safeName);
+    const base = path.basename(safeName, ext);
+    while (fs.existsSync(targetPath)) {
+      targetPath = path.join(targetDir, `${base}_${counter}${ext}`);
+      counter++;
+    }
+
+    const writeStream = fs.createWriteStream(targetPath);
+    req.pipe(writeStream);
+
+    writeStream.on('finish', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, path: targetPath, name: path.basename(targetPath) }));
+    });
+
+    writeStream.on('error', (err) => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
+
   // QR Code generation API
   if (req.url.startsWith('/api/qr')) {
     let QRCode = null;

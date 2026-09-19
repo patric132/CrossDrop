@@ -3,13 +3,13 @@
  */
 
 // Configuration
-const CHUNK_SIZE = 32 * 1024; // 32 KB per chunk (optimal for mobile SCTP & variable MTU)
-const BUFFER_THRESHOLD = 512 * 1024; // 512 KB backpressure threshold
+const CHUNK_SIZE = 64 * 1024; // 64 KB per chunk (standard optimal WebRTC MTU)
+const BUFFER_THRESHOLD = 1024 * 1024; // 1 MB backpressure threshold (prevents Chrome 16MB buffer overflow)
 const RTC_CONFIG = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' }
+    { urls: 'stun:stun.cloudflare.com:3478' }
   ]
 };
 
@@ -160,9 +160,15 @@ async function handleSignalingMessage(msg) {
 // WebRTC Peer Management
 function getOrCreatePeerConnection(targetId) {
   let pc = peerConnections.get(targetId);
-  if (pc) return pc;
+  if (pc && pc.signalingState !== 'closed' && pc.connectionState !== 'failed') {
+    return pc;
+  }
+  if (pc) {
+    cleanupPeerConnection(targetId);
+  }
 
   pc = new RTCPeerConnection(RTC_CONFIG);
+  pc._pendingCandidates = [];
 
   pc.onicecandidate = (event) => {
     if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
@@ -178,6 +184,14 @@ function getOrCreatePeerConnection(targetId) {
     setupDataChannel(targetId, event.channel);
   };
 
+  pc.onconnectionstatechange = () => {
+    console.log(`[WebRTC] Connection state with ${targetId}: ${pc.connectionState}`);
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      cleanupPeerConnection(targetId);
+      renderPeers();
+    }
+  };
+
   peerConnections.set(targetId, pc);
   return pc;
 }
@@ -185,12 +199,12 @@ function getOrCreatePeerConnection(targetId) {
 function cleanupPeerConnection(targetId) {
   const dc = dataChannels.get(targetId);
   if (dc) {
-    dc.close();
+    try { dc.close(); } catch (e) {}
     dataChannels.delete(targetId);
   }
   const pc = peerConnections.get(targetId);
   if (pc) {
-    pc.close();
+    try { pc.close(); } catch (e) {}
     peerConnections.delete(targetId);
   }
   if (selectedPeerId === targetId) {
@@ -203,17 +217,42 @@ async function handlePeerSignal(fromId, data) {
 
   if (data.sdp) {
     await pc.setRemoteDescription(new RTCSessionDescription(data));
+
+    // Process queued candidates that arrived before remote description
+    if (pc._pendingCandidates && pc._pendingCandidates.length > 0) {
+      for (const candidate of pc._pendingCandidates) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch (e) {
+          console.warn('Error adding queued candidate:', e);
+        }
+      }
+      pc._pendingCandidates = [];
+    }
+
     if (data.type === 'offer') {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      ws.send(JSON.stringify({
-        type: 'signal',
-        targetId: fromId,
-        data: { sdp: pc.localDescription.sdp, type: 'answer' }
-      }));
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'signal',
+          targetId: fromId,
+          data: { sdp: pc.localDescription.sdp, type: 'answer' }
+        }));
+      }
     }
   } else if (data.candidate) {
-    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    const iceCandidate = new RTCIceCandidate(data.candidate);
+    if (pc.remoteDescription && pc.remoteDescription.type) {
+      try {
+        await pc.addIceCandidate(iceCandidate);
+      } catch (e) {
+        console.warn('Failed to add candidate:', e);
+      }
+    } else {
+      pc._pendingCandidates = pc._pendingCandidates || [];
+      pc._pendingCandidates.push(iceCandidate);
+    }
   }
 }
 
@@ -221,6 +260,24 @@ async function ensureDataChannel(targetId) {
   let dc = dataChannels.get(targetId);
   if (dc && dc.readyState === 'open') {
     return dc;
+  }
+
+  // Ensure WebSocket is open before signaling
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    connectSignaling();
+    await new Promise((resolve) => {
+      let attempts = 0;
+      const checkWs = setInterval(() => {
+        attempts++;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          clearInterval(checkWs);
+          resolve();
+        } else if (attempts > 30) {
+          clearInterval(checkWs);
+          resolve();
+        }
+      }, 100);
+    });
   }
 
   const pc = getOrCreatePeerConnection(targetId);
@@ -237,7 +294,9 @@ async function ensureDataChannel(targetId) {
   }));
 
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Connection timed out. Please keep both screens awake and try again.')), 30000);
+    const timeout = setTimeout(() => {
+      reject(new Error('連線逾時（35秒未回應）。請確認兩端螢幕均開啟且處於 CrossDrop 畫面。'));
+    }, 35000);
     dc.onopen = () => {
       clearTimeout(timeout);
       resolve(dc);
@@ -297,17 +356,17 @@ function handleIncomingData(data, senderId) {
       if (currentReceiving && currentReceiving.id === msg.id) {
         const finishedRec = currentReceiving;
         currentReceiving = null;
-        completeReception(finishedRec);
-
-        // Send ACK back to sender immediately so sender can safely proceed to the next file!
-        try {
-          const senderDc = dataChannels.get(senderId);
-          if (senderDc && senderDc.readyState === 'open') {
-            senderDc.send(JSON.stringify({ type: 'file-ack', id: msg.id }));
+        completeReception(finishedRec).then(() => {
+          // Send ACK back to sender only after file has been successfully written to disk!
+          try {
+            const senderDc = dataChannels.get(senderId);
+            if (senderDc && senderDc.readyState === 'open') {
+              senderDc.send(JSON.stringify({ type: 'file-ack', id: msg.id }));
+            }
+          } catch (err) {
+            console.warn('Failed to send file-ack:', err);
           }
-        } catch (err) {
-          console.warn('Failed to send file-ack:', err);
-        }
+        });
       }
     }
   } else if (data instanceof ArrayBuffer) {
@@ -320,32 +379,50 @@ function handleIncomingData(data, senderId) {
   }
 }
 
-function completeReception(rec) {
+async function completeReception(rec) {
   playSuccessSound();
   const blob = new Blob(rec.chunks, { type: rec.mime || 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
 
-  // Notify Mac Native Host if available
+  // If running inside Mac native host, stream directly to disk via localhost endpoint
   if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.crossdropNative) {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64 = reader.result.split(',')[1];
-      window.webkit.messageHandlers.crossdropNative.postMessage({
-        type: 'file-received',
-        name: rec.name,
-        base64: base64
+    try {
+      const res = await fetch('/api/save-file', {
+        method: 'POST',
+        headers: { 'X-Filename': encodeURIComponent(rec.name) },
+        body: blob
       });
-    };
-    reader.readAsDataURL(blob);
+      const data = await res.json();
+      if (data.ok) {
+        window.webkit.messageHandlers.crossdropNative.postMessage({
+          type: 'file-saved-notification',
+          name: data.name || rec.name,
+          size: rec.size
+        });
+      }
+    } catch (err) {
+      console.error('Failed to save file via streaming endpoint, fallback to IPC:', err);
+      // Fallback: Read as data URL if local endpoint fails
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result.split(',')[1];
+        window.webkit.messageHandlers.crossdropNative.postMessage({
+          type: 'file-received',
+          name: rec.name,
+          base64: base64
+        });
+      };
+      reader.readAsDataURL(blob);
+    }
+  } else {
+    // Normal browser download (e.g. Android Chrome receiving files from Mac)
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = rec.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
-
-  // Trigger browser download
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = rec.name;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
 
   // Add to UI list
   const row = document.createElement('div');
@@ -354,11 +431,11 @@ function completeReception(rec) {
     <div class="file-info">
       <span style="font-size: 20px;">💾</span>
       <div>
-        <div class="file-name">${rec.name}</div>
+        <div class="file-name">${escapeHtml(rec.name)}</div>
         <div class="file-size">${formatBytes(rec.size)} • Just now</div>
       </div>
     </div>
-    <a href="${url}" download="${rec.name}" class="btn btn-secondary" style="padding: 6px 12px; text-decoration: none;">Download</a>
+    <a href="${url}" download="${escapeHtml(rec.name)}" class="btn btn-secondary" style="padding: 6px 12px; text-decoration: none;">Download</a>
   `;
   elReceivedList.prepend(row);
 
@@ -414,24 +491,28 @@ async function sendSingleFile(dc, file, fileIdx, totalFiles) {
   let offset = 0;
 
   while (offset < file.size) {
-    // Flow control: deadlock-free backpressure with timeout fallback
-    if (dc.bufferedAmount > BUFFER_THRESHOLD) {
+    // True backpressure: wait while buffer is high, never overflow Chrome's 16MB limit
+    while (dc.bufferedAmount > BUFFER_THRESHOLD) {
       await new Promise((resolve) => {
-        let resolved = false;
-        const done = () => {
-          if (!resolved) {
-            resolved = true;
-            dc.onbufferedamountlow = null;
-            resolve();
-          }
+        const onLow = () => {
+          dc.removeEventListener('bufferedamountlow', onLow);
+          resolve();
         };
-        dc.bufferedAmountLowThreshold = Math.floor(BUFFER_THRESHOLD / 2);
-        dc.onbufferedamountlow = done;
-        setTimeout(done, 35); // 35ms fallback timeout to prevent any deadlock
+        dc.bufferedAmountLowThreshold = Math.floor(BUFFER_THRESHOLD / 4);
+        dc.addEventListener('bufferedamountlow', onLow);
+        setTimeout(() => {
+          dc.removeEventListener('bufferedamountlow', onLow);
+          resolve();
+        }, 50);
       });
+
+      if (dc.readyState !== 'open') {
+        throw new Error('DataChannel 連線意外中斷（請確保螢幕開啟並重試）');
+      }
     }
 
-    const slice = file.slice(offset, offset + CHUNK_SIZE);
+    const currentChunkSize = Math.min(CHUNK_SIZE, file.size - offset);
+    const slice = file.slice(offset, offset + currentChunkSize);
     const buffer = await slice.arrayBuffer();
     dc.send(buffer);
 
@@ -445,20 +526,20 @@ async function sendSingleFile(dc, file, fileIdx, totalFiles) {
     id: transferId
   }));
 
-  // Wait for ACK from receiver before continuing to the next file (with 8s safety timeout)
+  // Wait for ACK from receiver before continuing to the next file (with 25s safety timeout for large videos)
   await new Promise((resolve) => {
     const ackTimer = setTimeout(() => {
       pendingAcks.delete(transferId);
-      resolve(); // Proceed anyway after 8s so single dropped packet doesn't stall batch
-    }, 8000);
+      resolve(); // Proceed anyway after 25s so single dropped packet doesn't stall batch
+    }, 25000);
     pendingAcks.set(transferId, () => {
       clearTimeout(ackTimer);
       resolve();
     });
   });
 
-  // Brief 50ms inter-file pause to let network socket and receiver memory settle
-  await new Promise(r => setTimeout(r, 50));
+  // Brief 60ms pause to let network socket and receiver memory settle
+  await new Promise(r => setTimeout(r, 60));
 
   if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.crossdropNative) {
     window.webkit.messageHandlers.crossdropNative.postMessage({

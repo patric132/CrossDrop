@@ -351,6 +351,15 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
                 }
             }
 
+        case "file-saved-notification":
+            if let name = dict["name"] as? String,
+               let size = dict["size"] as? Int {
+                DispatchQueue.main.async {
+                    self.showSystemNotification(title: "收到檔案！⚡", body: "\(name) (\(self.formatBytes(size))) 已存入 Documents/CrossDrop_Received")
+                    NSSound(named: "Glass")?.play()
+                }
+            }
+
         case "file-received":
             if let name = dict["name"] as? String,
                let base64 = dict["base64"] as? String,
