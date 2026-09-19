@@ -47,7 +47,18 @@ const server = http.createServer((req, res) => {
   }
 
   // Direct file save endpoint for Mac (stream file directly to Documents/CrossDrop_Received)
+  // SECURITY: Strictly restrict to Mac local loopback; reject any external requests from Cloudflare Tunnel
   if (req.method === 'POST' && req.url === '/api/save-file') {
+    const isFromCloudflare = req.headers['cf-ray'] || req.headers['cf-connecting-ip'];
+    const ip = req.socket.remoteAddress || '';
+    const isLoopback = ip.includes('127.0.0.1') || ip === '::1' || ip === '::ffff:127.0.0.1';
+
+    if (isFromCloudflare || !isLoopback) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Access denied: Local loopback only' }));
+      return;
+    }
+
     const rawName = decodeURIComponent(req.headers['x-filename'] || 'received_file');
     const safeName = path.basename(rawName).replace(/[/\\?%*:|"<>]/g, '_') || 'received_file';
     const homeDir = process.env.HOME || '/Users/' + (process.env.USER || 'patric132');
