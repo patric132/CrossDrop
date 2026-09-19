@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>CrossDrop - Seamless P2P AirDrop</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-icon">⚡</div>
+        <div>
+          <h1>CrossDrop</h1>
+          <p>Direct WebRTC P2P Transfer</p>
+        </div>
+      </div>
+      <div class="device-badge">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">Disconnected</span>
+      </div>
+    </header>
+
+    <!-- 5G Public Connection Banner -->
+    <div class="card" id="connection-banner" style="display: none; padding: 16px; background: rgba(10, 132, 255, 0.12); border-color: rgba(10, 132, 255, 0.3);">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+        <div style="overflow: hidden;">
+          <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent);">📱 手機 5G 直連網址</div>
+          <div id="public-url-text" style="font-size: 13px; font-weight: 600; color: #fff; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">--</div>
+        </div>
+        <div style="display: flex; gap: 6px; flex-shrink: 0;">
+          <button id="btn-copy-url" class="btn" style="padding: 6px 12px; font-size: 12px;">複製</button>
+          <button id="btn-show-qr" class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;">QR Code</button>
+        </div>
+      </div>
+      <!-- QR Modal Popup -->
+      <div id="qr-modal" style="display: none; margin-top: 14px; text-align: center; background: #fff; border-radius: 12px; padding: 16px;">
+        <div style="color: #000; font-size: 12px; font-weight: 600; margin-bottom: 8px;">用手機相機掃描即可連線</div>
+        <img id="qr-image" style="width: 200px; height: 200px; margin: 0 auto; display: block;" alt="QR Code">
+      </div>
+    </div>
+
+    <!-- Radar / Device Discovery Card -->
+    <div class="card">
+      <div class="radar-section">
+        <div class="radar-circle">
+          <div class="device-avatar">📡</div>
+        </div>
+        <div style="text-align: center;">
+          <h2 id="my-device-name" style="font-size: 16px; font-weight: 600;">Detecting...</h2>
+          <p style="font-size: 12px; color: var(--text-sub); margin-top: 2px;">
+            Visible to paired devices across any network
+          </p>
+        </div>
+      </div>
+
+      <!-- Peer Selection Grid -->
+      <div style="margin-top: 20px;">
+        <div class="peers-title">Nearby & Paired Devices</div>
+        <div class="peers-grid" id="peers-container">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Drop Zone Card -->
+    <div class="card">
+      <input type="file" id="file-input" multiple style="display: none;">
+      <div class="drop-zone" id="drop-zone">
+        <div class="drop-icon">📂</div>
+        <div class="drop-text">
+          <b>Click to choose files</b> or drag & drop here
+        </div>
+        <div style="font-size: 11px; color: var(--text-sub);">
+          Photos, 4K videos, documents • No file size limit
+        </div>
+      </div>
+
+      <!-- Transfer Progress Card -->
+      <div class="transfer-card" id="transfer-card" style="margin-top: 16px;">
+        <div class="transfer-header">
+          <span id="transfer-title" style="font-weight: 600;">Transferring...</span>
+          <span id="transfer-percent" style="font-weight: 700; color: var(--accent);">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-bar"></div>
+        </div>
+        <div class="transfer-meta">
+          <span id="transfer-speed">0.0 MB/s</span>
+          <span id="transfer-remaining">--</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pairing & Settings Card -->
+    <div class="card">
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">Device Pairing</div>
+      <p style="font-size: 12px; color: var(--text-sub); margin-bottom: 12px;">
+        Devices with the same Pair Key find each other across 5G and Wi-Fi automatically.
+      </p>
+
+      <div class="pairing-box">
+        <input type="text" id="pair-key-input" class="input-field" placeholder="Enter your secret Pair Key">
+        <button id="btn-save-pair" class="btn">Save</button>
+      </div>
+
+      <div style="margin-top: 12px; display: flex; gap: 8px;">
+        <button id="btn-gen-pin" class="btn btn-secondary" style="font-size: 12px; padding: 8px 12px;">
+          🔑 Generate 6-Digit PIN
+        </button>
+      </div>
+    </div>
+
+    <!-- Received Files History -->
+    <div class="card" id="received-card">
+      <div class="peers-title">Received Files</div>
+      <div class="received-list" id="received-list">
+        <div style="text-align: center; color: var(--text-sub); font-size: 12px; padding: 12px 0;">
+          No incoming files yet
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

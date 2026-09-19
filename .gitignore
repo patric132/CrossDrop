@@ -1,0 +1,53 @@
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon\r
+._*
+.Spotlight-V100
+.Trashes
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json.bak
+
+# Swift & macOS Builds
+mac/CrossDropBar
+mac/CrossDrop.app/
+*.dSYM/
+*.app
+
+# Android & Gradle
+android/.gradle/
+android/local.properties
+android/.idea/
+android/*.iml
+android/app/*.iml
+android/build/
+android/app/build/
+android/.cxx/
+*.apk
+*.aab
+*.dex
+
+# Logs & Temporary Files
+*.log
+/server.log
+/tmp/crossdrop*
+
+# User Data & Test Transferred Files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.mov
+*.pdf
+*.zip
+*.tar.gz
+!web/*.png
+!mac/AppIcon.icns

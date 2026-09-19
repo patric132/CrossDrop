@@ -1,0 +1,14 @@
+{
+  "name": "crossdrop-signal",
+  "version": "1.0.0",
+  "description": "Lightweight WebRTC signaling server for CrossDrop P2P file transfer",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test_signaling.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  }
+}

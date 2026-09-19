@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">CrossDrop</string>
+    <string name="send_title">Sending to Mac</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="save">Save</string>
+    <string name="pair_key">Pair Key</string>
+    <string name="receiver_ready">CrossDrop is ready to receive files</string>
+</resources>
