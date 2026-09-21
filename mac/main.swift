@@ -7,7 +7,6 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
     var window: NSWindow!
     var webView: WKWebView!
     var storageURL: URL!
-    var pairKey: String = "my-personal-drop"
     var connectedPeers: [String: String] = [:] // id -> name
     var lastSelectedPeerId: String? = nil
 
@@ -153,7 +152,12 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
         print("[CrossDrop Mac] 5G Public URL discovered: \(url)")
 
         showSystemNotification(title: "CrossDrop Ready! ⚡", body: "手機掃描 QR Code 或打開網址連線")
-        webView.evaluateJavaScript("window.setPublicUrl && window.setPublicUrl('\(url)');", completionHandler: nil)
+        let payload: [String: Any] = ["url": url]
+        if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            let js = "window.setPublicUrlJSON && window.setPublicUrlJSON(\(jsonString));"
+            webView.evaluateJavaScript(js, completionHandler: nil)
+        }
     }
 
     func stopBackgroundServices() {
@@ -330,7 +334,12 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if let url = publicURL {
-            webView.evaluateJavaScript("window.setPublicUrl && window.setPublicUrl('\(url)');", completionHandler: nil)
+            let payload: [String: Any] = ["url": url]
+            if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                let js = "window.setPublicUrlJSON && window.setPublicUrlJSON(\(jsonString));"
+                webView.evaluateJavaScript(js, completionHandler: nil)
+            }
         }
     }
 
@@ -464,9 +473,19 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
             let fileName = fileURL.lastPathComponent
             let mimeType = "application/octet-stream"
 
-            let js = "window.nativeSendFile('\(peerId)', '\(fileName)', \(data.count), '\(mimeType)', '\(base64)');"
-            webView.evaluateJavaScript(js, completionHandler: nil)
-            print("[CrossDrop Mac] Initiating send of \(fileName) (\(data.count) bytes) to \(peerId)")
+            let payload: [String: Any] = [
+                "targetId": peerId,
+                "name": fileName,
+                "size": data.count,
+                "mime": mimeType,
+                "base64": base64
+            ]
+            if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
+               let jsonString = String(data: jsonData, encoding: .utf8) {
+                let js = "window.nativeSendFileJSON && window.nativeSendFileJSON(\(jsonString));"
+                webView.evaluateJavaScript(js, completionHandler: nil)
+                print("[CrossDrop Mac] Initiating send of \(fileName) (\(data.count) bytes) to \(peerId)")
+            }
         } catch {
             print("[CrossDrop Mac] Error reading file: \(error)")
         }

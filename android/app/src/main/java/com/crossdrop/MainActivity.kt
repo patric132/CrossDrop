@@ -28,7 +28,7 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tvStatus)
 
         val prefs = getSharedPreferences("crossdrop_prefs", MODE_PRIVATE)
-        etPairKey.setText(prefs.getString("pair_key", "my-personal-drop"))
+        etPairKey.setText(prefs.getString("pair_key", ""))
         etServerUrl.setText(prefs.getString("server_url", "ws://10.0.0.1:3000"))
 
         btnSavePairKey.setOnClickListener {

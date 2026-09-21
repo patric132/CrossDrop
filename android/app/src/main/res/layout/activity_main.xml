@@ -76,7 +76,7 @@
         android:background="@color/card_dark"
         android:textColor="@color/white"
         android:padding="12dp"
-        android:hint="e.g. my-personal-drop"
+        android:hint="6 位數 PIN 碼或配對 Token"
         android:textColorHint="@color/text_sub" />
 
     <Button

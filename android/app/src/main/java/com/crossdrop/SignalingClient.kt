@@ -38,7 +38,13 @@ class SignalingClient(
                     put("deviceId", deviceId)
                     put("deviceName", deviceName)
                     put("deviceType", "android")
-                    put("pairKey", pairKey)
+                    if (pairKey.isNotBlank()) {
+                        if (pairKey.length == 6 && pairKey.all { it.isDigit() }) {
+                            put("pin", pairKey.trim())
+                        } else {
+                            put("token", pairKey.trim())
+                        }
+                    }
                 }
                 webSocket.send(regMsg.toString())
             }

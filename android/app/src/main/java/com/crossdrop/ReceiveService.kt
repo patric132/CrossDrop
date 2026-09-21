@@ -30,7 +30,7 @@ class ReceiveService : Service() {
 
     private fun startSignaling() {
         val prefs = getSharedPreferences("crossdrop_prefs", Context.MODE_PRIVATE)
-        val pairKey = prefs.getString("pair_key", "my-personal-drop") ?: "my-personal-drop"
+        val pairKey = prefs.getString("pair_key", "") ?: ""
         val serverUrl = prefs.getString("server_url", "ws://10.0.0.1:3000") ?: "ws://10.0.0.1:3000"
 
         val deviceId = "android-receiver-" + UUID.randomUUID().toString().substring(0, 8)

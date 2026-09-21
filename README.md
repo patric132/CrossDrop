@@ -23,11 +23,19 @@
 * 🔥 **完全不需開啟手機熱點**
   * 徹底告別傳統「開熱點給 Mac 連」的繁瑣步驟！Mac 不需斷開現有網路，手機也不會因開熱點而發燙耗電。
 * 🔒 **真正的端對端直連加密 (E2EE)**
-  * 基於 **WebRTC DataChannel (SCTP over DTLS)** 技術。
-  * 檔案直接在兩台裝置之間點對點傳輸，**不經過、不上傳任何第三方雲端伺服器**，保障極致隱私與線速頻寬。
+  * 基於 **WebRTC DataChannel (SCTP over DTLS 1.2+)** 技術。
+  * 傳輸通道使用高強度非對稱握手與對稱密碼學加密，中間人無法窺探或竄改。
+  * 檔案直接在兩台裝置之間點對點高速傳輸，**不經過、不上傳任何第三方雲端伺服器**。
+* 🛡️ **全面資安強化架構 (Security Hardening)**
+  * **動態隨機房間 (256-bit Entropy)**：廢除任何公開或預設房間名稱，每次連線皆為獨立隔離房間。
+  * **一次性配對 Token**：透過 QR Code 或 5G 連結傳遞之 Token 採單次使用即失效機制，杜絕連結被重送攻擊 (Replay Attack)。
+  * **6 位數 PIN 碼防暴力破解**：支援手動輸入 PIN 配對，內建 5 次失敗即鎖定 15 分鐘機制，防止隨機撞庫。
+  * **檔案接收確認機制 (Transfer Consent)**：發送檔案前必須在接收端 UI 彈出原生確認視窗（顯示發送者、檔名、大小），經接收端點選「接受」後才啟動傳輸；未經授權之二進位 Chunks 一律強制捨棄。
+  * **檔案大小與溢出防護**：強制限制單一檔案大小上限為 10 GB，並在串流過程中實時校驗已接收位元組數（`receivedBytes <= declaredSize`），超量立即中斷傳輸。
+  * **檔案名稱安全淨化**：防止目錄穿越（`../`）、控制字元與 XSS 注入攻擊。
 * 📦 **批次多檔案高速穩定傳輸**
-  * 實作 **Per-file ACK 握手協議** 與 **32KB / 512KB Backpressure 動態流控**。
-  * 手機一次選取數十張高解析照片、長影片也不會超時卡死或丟包；自動整合行動瀏覽器防休眠 (WakeLock)。
+  * 實作 **Per-file ACK 握手協議** 與 **64KB / 1MB Backpressure 動態流控**。
+  * 手機一次選取數十張高解析照片、4K 長影片也不會超時卡死或丟包；自動整合行動瀏覽器防休眠 (WakeLock)。
 * 🍏 **macOS 原生應用 (`CrossDrop.app`)**
   * 打包為完整 macOS 應用程式，可從 Spotlight (`Cmd + 空白鍵`) 或 Launchpad 啟動。
   * **背景全自動託管**：啟動時由 Swift 自動管理信令與加密通道，**日常使用完全不需打開終端機**。
@@ -40,25 +48,40 @@
 
 ---
 
-## 🏗️ 系統架構 (Architecture)
+## 🏗️ 系統架構與資料流 (Architecture & Security Model)
 
 ```text
 [ Android 裝置 ]                                           [ macOS 裝置 ]
   📱 5G / 行動網路                                           💻 任何 Wi-Fi / 乙太網路
          │                                                        │
-         │ (1) 初始信令握手 (WebSocket / Cloudflare Tunnel)         │
+         │ (1) 信令握手 (WebSocket over Cloudflare Tunnel)         │
+         │     • 僅交換 SDP Offer/Answer 與 ICE Candidates        │
+         │     • 嚴格隔離 Room，禁止跨房間信令轉發                 │
+         │     • 絕不經手任何檔案內容與二進位數據                   │
          ├───────────────────────────────────────────────────────►┤
          │                                                        │
-         │ (2) STUN NAT 打洞 & DTLS 握手完成                      │
+         │ (2) STUN NAT 打洞 & WebRTC DTLS 握手完成               │
          │◄══════════════════════════════════════════════════════►│
          │                                                        │
-         │ (3) 純點對點高速傳輸 (WebRTC DataChannel - SCTP)        │
+         │ (3) 傳輸授權 (Transfer Consent Protocol)                │
+         │     • 發送端推送 transfer-request (檔名/大小/發送者)     │
+         │     • 接收端彈出確認對話框，經使用者點擊「接受」          │
+         │     • 接收端回覆 transfer-accept 授權傳輸                │
+         │◄══════════════════════════════════════════════════════►│
+         │                                                        │
+         │ (4) 純點對點高速加密傳輸 (WebRTC DataChannel - SCTP/DTLS) │
          │═══════════════════════════════════════════════════════►│
-         │     • 32KB 分塊串流 (Streaming)                         │
-         │     • Backpressure 緩衝流量保護                        │
+         │     • 64KB 分塊串流 (Streaming)                         │
+         │     • 1MB Backpressure 緩衝流量保護                     │
+         │     • receivedBytes > declaredSize 溢出即時阻斷防護     │
          │     • 每檔 ACK 存盤確認 (Batch Handshake)               │
          │                                                        │
 ```
+
+> **資安特別說明**：
+> 1. **WebRTC DataChannel 安全性**：傳輸通道採用標準 DTLS 加密協議，提供端對端機密性與完整性保證。
+> 2. **Signaling Server 職責純化**：信令伺服器僅作為建立 P2P 連線初期的 SDP/ICE 中繼站，無權限也不會接觸到任何檔案本體。
+> 3. **Cloudflare Tunnel 角色定位**：僅用於讓手機在外網（如 5G）能存取 Mac 上的信令伺服器與 Web 靜態頁面，後續所有檔案傳輸均切換為直接 P2P WebRTC 傳輸通道。
 
 ---
 
@@ -164,11 +187,14 @@ cd mac
 
 | 規格維度 | 具體實現與參數 |
 | :--- | :--- |
-| **P2P 直連協議** | WebRTC DataChannel (SCTP over DTLS 1.2+ / UDP) |
-| **公網 NAT 穿透** | Google 公用 STUN (`stun.l.google.com:19302`) |
-| **5G 跨網隧道** | Cloudflare Quick Tunnel (`trycloudflare.com` 全自動隨機加密通道) |
-| **分塊傳輸大小** | 32 KB / Chunk（經最佳化，符合行動網路 MTU 封包上限，防丟包） |
-| **流量控制** | 512 KB 緩衝區門檻 + 35ms 輪詢 Fallback（徹底防止信道死鎖） |
+| **P2P 直連協議** | WebRTC DataChannel (SCTP over DTLS 1.2+ / UDP 端對端加密) |
+| **公網 NAT 穿透** | Google 公用 STUN (`stun.l.google.com:19302`) + Cloudflare STUN |
+| **5G 跨網信令通道** | Cloudflare Quick Tunnel (`trycloudflare.com` 自動加密通道，僅供信令中繼) |
+| **房間與授權機制** | 256-bit CSPRNG 隔離房間 + 一次性 QR 配對 Token + 6 位數 PIN 碼 (5 次錯誤鎖定 15 分鐘) |
+| **檔案接收授權** | Transfer Consent Protocol（發送端預先申報，接收端 UI 顯式確認後方可傳輸） |
+| **單檔大小上限** | 10 GB (強制邊界檢核與串流實時 overflow guard 雙重保險) |
+| **分塊傳輸大小** | 64 KB / Chunk（標準 WebRTC MTU 最佳尺寸，防丟包與延遲） |
+| **流量控制** | 1 MB 緩衝區門檻 + bufferedamountlow 事件驅動流控（防死鎖與記憶體溢出） |
 | **批次傳輸協議** | Per-file ACK Handshake（每檔磁碟寫入確認後才傳下一檔） |
 | **防休眠技術** | Screen WakeLock API（防止傳輸大檔案時手機螢幕休眠斷線） |
 | **macOS 狀態列** | AppKit `NSStatusItem`，支援 `autosaveName` 與 `Preferred Position` |
