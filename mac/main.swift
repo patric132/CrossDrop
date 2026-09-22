@@ -15,6 +15,10 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
     var publicURL: String? = nil
     var cloudflaredOutputPipe: Pipe?
 
+    var tunnelHealthTimer: Timer?
+    var consecutiveTunnelFailures: Int = 0
+    var isRestartingTunnel: Bool = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 1. Setup Documents/CrossDrop_Received independent storage directory
         let userDocs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -24,13 +28,24 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
         // 2. Start Background Services (Node.js & Cloudflare Tunnel)
         startBackgroundServices()
 
-        // 3. Setup Web Engine
+        // 3. Start Tunnel Health Supervisor
+        startTunnelSupervisor()
+
+        // 4. Register for system sleep/wake notifications
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWake(_:)),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+
+        // 5. Setup Web Engine
         setupWebEngine()
 
-        // 4. Setup Native GUI Window
+        // 6. Setup Native GUI Window
         setupWindow()
 
-        // 5. Setup Status Bar Item
+        // 7. Setup Status Bar Item
         setupStatusBar()
 
         print("[CrossDrop Mac] Started successfully. Saving files to: \(storageURL.path)")
@@ -117,6 +132,12 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
         }
 
         // 2. Start Cloudflare Tunnel
+        startCloudflareTunnel()
+    }
+
+    func startCloudflareTunnel() {
+        stopCloudflareTunnel()
+
         let cfPath = findExecutable(name: "cloudflared")
         let cfProc = Process()
         cfProc.executableURL = URL(fileURLWithPath: cfPath)
@@ -137,6 +158,15 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
             }
         }
 
+        cfProc.terminationHandler = { [weak self] proc in
+            print("[CrossDrop Mac] Cloudflared process exited (code \(proc.terminationStatus)).")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                if self?.cloudflaredProcess == nil {
+                    self?.startCloudflareTunnel()
+                }
+            }
+        }
+
         do {
             try cfProc.run()
             self.cloudflaredProcess = cfProc
@@ -146,9 +176,94 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
         }
     }
 
+    func stopCloudflareTunnel() {
+        cloudflaredOutputPipe?.fileHandleForReading.readabilityHandler = nil
+        cloudflaredProcess?.terminationHandler = nil
+        cloudflaredProcess?.terminate()
+        cloudflaredProcess = nil
+    }
+
+    @objc func restartCloudflareTunnel() {
+        guard !isRestartingTunnel else { return }
+        isRestartingTunnel = true
+        print("[CrossDrop Mac] Restarting Cloudflare Tunnel...")
+
+        self.publicURL = nil
+        self.consecutiveTunnelFailures = 0
+
+        // Inform Web UI that tunnel is renewing
+        let payload: [String: Any] = ["reconnecting": true]
+        if let jsonData = try? JSONSerialization.data(withJSONObject: payload),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            self.webView.evaluateJavaScript("window.setTunnelReconnecting && window.setTunnelReconnecting(\(jsonString));", completionHandler: nil)
+        }
+
+        stopCloudflareTunnel()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.startCloudflareTunnel()
+            self?.isRestartingTunnel = false
+        }
+    }
+
+    func startTunnelSupervisor() {
+        tunnelHealthTimer?.invalidate()
+        tunnelHealthTimer = Timer.scheduledTimer(withTimeInterval: 25.0, repeats: true) { [weak self] _ in
+            self?.checkTunnelHealth()
+        }
+    }
+
+    func checkTunnelHealth() {
+        guard !isRestartingTunnel else { return }
+
+        // 1. Process liveness check
+        if cloudflaredProcess == nil || !(cloudflaredProcess?.isRunning ?? false) {
+            print("[CrossDrop Mac] Cloudflare process is not running. Reviving...")
+            restartCloudflareTunnel()
+            return
+        }
+
+        // 2. End-to-end connectivity check
+        guard let urlString = self.publicURL, let url = URL(string: "\(urlString)/health") else {
+            return
+        }
+
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 7.0
+        req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+
+        let task = URLSession.shared.dataTask(with: req) { [weak self] (data, response, error) in
+            guard let self = self else { return }
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if error != nil || statusCode != 200 {
+                self.consecutiveTunnelFailures += 1
+                print("[CrossDrop Mac] Tunnel health check failed (\(statusCode), err: \(error?.localizedDescription ?? "none"), fail count: \(self.consecutiveTunnelFailures))")
+                if self.consecutiveTunnelFailures >= 2 {
+                    print("[CrossDrop Mac] Tunnel confirmed unresponsive. Automatically auto-healing...")
+                    DispatchQueue.main.async {
+                        self.restartCloudflareTunnel()
+                    }
+                }
+            } else {
+                self.consecutiveTunnelFailures = 0
+            }
+        }
+        task.resume()
+    }
+
+    @objc func handleSystemWake(_ notification: Notification) {
+        print("[CrossDrop Mac] System woke from sleep. Reconnecting tunnel in 3 seconds...")
+        showSystemNotification(title: "CrossDrop", body: "系統已喚醒，正在自動重新建立 5G 加密連線...")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.restartCloudflareTunnel()
+        }
+    }
+
     func onPublicURLDiscovered(_ url: String) {
         if self.publicURL == url { return }
         self.publicURL = url
+        self.consecutiveTunnelFailures = 0
         print("[CrossDrop Mac] 5G Public URL discovered: \(url)")
 
         showSystemNotification(title: "CrossDrop Ready! ⚡", body: "手機掃描 QR Code 或打開網址連線")
@@ -161,8 +276,10 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
     }
 
     func stopBackgroundServices() {
+        tunnelHealthTimer?.invalidate()
+        tunnelHealthTimer = nil
         nodeProcess?.terminate()
-        cloudflaredProcess?.terminate()
+        stopCloudflareTunnel()
     }
 
     // MARK: - Status Bar & Context Menu
@@ -222,6 +339,10 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
             tunnelItem.isEnabled = false
             menu.addItem(tunnelItem)
         }
+
+        let restartTunnelItem = NSMenuItem(title: "🔄 重新建立 5G 連線 (刷新 QR Code)", action: #selector(restartCloudflareTunnel), keyEquivalent: "r")
+        restartTunnelItem.target = self
+        menu.addItem(restartTunnelItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -392,6 +513,11 @@ class CrossDropApp: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKN
                     button.title = ""
                     button.toolTip = "CrossDrop - 點擊開關視窗，右鍵打開選單"
                 }
+            }
+
+        case "restart-tunnel":
+            DispatchQueue.main.async {
+                self.restartCloudflareTunnel()
             }
 
         default:

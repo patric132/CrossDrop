@@ -34,14 +34,26 @@
           <div id="public-url-text" style="font-size: 13px; font-weight: 600; color: #fff; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">--</div>
         </div>
         <div style="display: flex; gap: 6px; flex-shrink: 0;">
+          <button id="btn-reconnect-tunnel" class="btn btn-secondary" style="padding: 6px 10px; font-size: 12px;" title="重新建立 5G 連線">🔄 刷新</button>
           <button id="btn-copy-url" class="btn" style="padding: 6px 12px; font-size: 12px;">複製</button>
           <button id="btn-show-qr" class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;">QR Code</button>
         </div>
       </div>
       <!-- QR Modal Popup -->
       <div id="qr-modal" style="display: none; margin-top: 14px; text-align: center; background: #fff; border-radius: 12px; padding: 16px;">
-        <div style="color: #000; font-size: 12px; font-weight: 600; margin-bottom: 8px;">用手機相機掃描即可連線</div>
+        <div style="color: #000; font-size: 12px; font-weight: 600; margin-bottom: 4px;">用手機相機掃描即可連線</div>
+        <div style="color: #666; font-size: 11px; margin-bottom: 8px;">有效時間 30 分鐘 • 開啟時自動保持最新</div>
         <img id="qr-image" style="width: 200px; height: 200px; margin: 0 auto; display: block;" alt="QR Code">
+      </div>
+      <!-- Wi-Fi Local Connection (Same Wi-Fi fallback) -->
+      <div id="local-wifi-row" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.15);">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <div style="overflow: hidden;">
+            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--success);">📶 同 Wi-Fi 區網直連 (極速備援)</div>
+            <div id="local-url-text" style="font-size: 12px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">--</div>
+          </div>
+          <button id="btn-copy-local" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;">複製</button>
+        </div>
       </div>
     </div>
 

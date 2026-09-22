@@ -120,6 +120,23 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Local IP and network discovery endpoint
+  if (req.url === '/api/network-info') {
+    const os = require('os');
+    const ifaces = os.networkInterfaces();
+    const ips = [];
+    for (const dev in ifaces) {
+      for (const details of ifaces[dev]) {
+        if (details.family === 'IPv4' && !details.internal) {
+          ips.push(details.address);
+        }
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ips, port: PORT }));
+    return;
+  }
+
   // Loopback-only API: Generate new pairing token for local Mac Host
   if (req.method === 'POST' && req.url === '/api/create-session') {
     const isFromCloudflare = req.headers['cf-ray'] || req.headers['cf-connecting-ip'];
@@ -151,7 +168,7 @@ const server = http.createServer((req, res) => {
           });
         }
 
-        const ttlMs = (typeof data.ttlSeconds === 'number') ? Math.floor(data.ttlSeconds * 1000) : 10 * 60 * 1000;
+        const ttlMs = (typeof data.ttlSeconds === 'number') ? Math.floor(data.ttlSeconds * 1000) : 30 * 60 * 1000;
 
         // Generate one-time Pairing Token
         const token = generateSecureToken(32);
@@ -181,7 +198,7 @@ const server = http.createServer((req, res) => {
           token,
           pairingToken: token,
           pin,
-          expiresInSeconds: 600
+          expiresInSeconds: Math.floor(ttlMs / 1000)
         }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -500,7 +517,7 @@ wss.on('connection', (ws, req) => {
           token,
           roomId: currentRoomId,
           createdAt: Date.now(),
-          expiresAt: Date.now() + 10 * 60 * 1000, // 10 mins
+          expiresAt: Date.now() + 30 * 60 * 1000, // 30 mins
           status: 'pending'
         });
 
@@ -508,7 +525,7 @@ wss.on('connection', (ws, req) => {
         send(ws, {
           type: 'token-generated',
           token,
-          expiresInSeconds: 600
+          expiresInSeconds: 1800
         });
         break;
       }
@@ -525,7 +542,7 @@ wss.on('connection', (ws, req) => {
           code,
           roomId: currentRoomId,
           createdAt: Date.now(),
-          expiresAt: Date.now() + 10 * 60 * 1000, // 10 mins
+          expiresAt: Date.now() + 30 * 60 * 1000, // 30 mins
           attempts: 0
         });
 
@@ -533,7 +550,7 @@ wss.on('connection', (ws, req) => {
         send(ws, {
           type: 'pin-generated',
           code,
-          expiresInSeconds: 600
+          expiresInSeconds: 1800
         });
         break;
       }

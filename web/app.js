@@ -65,6 +65,8 @@ let roomId = localStorage.getItem('crossdrop_room_id') || null;
 let currentPairingToken = null;
 let currentPin = null;
 let publicTunnelUrl = null;
+let localWifiUrl = null;
+let tokenGeneratedAt = 0;
 
 let peers = new Map(); // targetId -> { deviceId, deviceName, deviceType }
 let selectedPeerId = null;
@@ -127,6 +129,25 @@ function init() {
   if (isMacHost()) {
     if (elHostPairingCard) elHostPairingCard.style.display = 'block';
     if (elPinEntryCard) elPinEntryCard.style.display = 'none';
+
+    // Discover local Wi-Fi IP for direct LAN fallback
+    fetch('/api/network-info')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.ips && data.ips.length > 0) {
+          localWifiUrl = `http://${data.ips[0]}:${data.port || 3000}`;
+          updateLocalWifiBanner();
+        }
+      })
+      .catch(() => {});
+
+    // Periodic token & PIN heartbeat (every 10 minutes) so credentials never expire
+    setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'generate-token' }));
+        ws.send(JSON.stringify({ type: 'generate-pin' }));
+      }
+    }, 10 * 60 * 1000);
   } else {
     if (elHostPairingCard) elHostPairingCard.style.display = 'none';
   }
@@ -246,7 +267,13 @@ async function handleSignalingMessage(msg) {
 
     case 'token-generated': {
       currentPairingToken = msg.token;
+      tokenGeneratedAt = Date.now();
       updatePublicUrlBanner();
+      updateLocalWifiBanner();
+      const qrModal = document.getElementById('qr-modal');
+      if (qrModal && qrModal.style.display === 'block') {
+        renderQrCode();
+      }
       break;
     }
 
@@ -304,7 +331,7 @@ async function handleSignalingMessage(msg) {
       if (msg.code === 'UNAUTHORIZED' || msg.code === 'INVALID_TOKEN' || msg.code === 'EXPIRED_TOKEN') {
         localStorage.removeItem('crossdrop_session_token');
         sessionToken = null;
-        showPinEntryUI(msg.message || '連線逾期或未授權，請輸入 PIN 碼配對');
+        showPinEntryUI('⚠️ 配對連結已逾期或無效，請直接輸入 Mac 螢幕上顯示的 6 位數 PIN 碼：');
       } else if (msg.code === 'INVALID_PIN' || msg.code === 'PIN_LOCKED') {
         showPinError(msg.message);
       } else {
@@ -1132,6 +1159,40 @@ function setupEventListeners() {
       handleFilesSelected(elFileInput.files);
     }
   };
+
+  const btnQr = document.getElementById('btn-show-qr');
+  const qrModal = document.getElementById('qr-modal');
+  if (btnQr && qrModal) {
+    btnQr.onclick = () => {
+      if (qrModal.style.display === 'block') {
+        qrModal.style.display = 'none';
+      } else {
+        qrModal.style.display = 'block';
+        if (isMacHost() && ws && ws.readyState === WebSocket.OPEN) {
+          if (!tokenGeneratedAt || (Date.now() - tokenGeneratedAt > 5 * 60 * 1000)) {
+            ws.send(JSON.stringify({ type: 'generate-token' }));
+          }
+        }
+        renderQrCode();
+      }
+    };
+  }
+
+  const btnReconnectTunnel = document.getElementById('btn-reconnect-tunnel');
+  if (btnReconnectTunnel) {
+    btnReconnectTunnel.onclick = () => {
+      btnReconnectTunnel.disabled = true;
+      btnReconnectTunnel.textContent = '連線中...';
+      window.setTunnelReconnecting();
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.crossdropNative) {
+        window.webkit.messageHandlers.crossdropNative.postMessage({ type: 'restart-tunnel' });
+      }
+      setTimeout(() => {
+        btnReconnectTunnel.disabled = false;
+        btnReconnectTunnel.textContent = '🔄 刷新';
+      }, 5000);
+    };
+  }
 }
 
 function handleFilesSelected(files) {
@@ -1174,14 +1235,15 @@ window.nativeSendFile = function(targetId, name, size, mime, base64) {
 
 // 5G URL banner & QR with Token update
 function updatePublicUrlBanner() {
-  if (!publicTunnelUrl) return;
-
   const banner = document.getElementById('connection-banner');
   const urlText = document.getElementById('public-url-text');
   const btnCopy = document.getElementById('btn-copy-url');
-  const btnQr = document.getElementById('btn-show-qr');
-  const qrModal = document.getElementById('qr-modal');
-  const qrImage = document.getElementById('qr-image');
+
+  if (!publicTunnelUrl) {
+    if (banner) banner.style.display = 'block';
+    if (urlText) urlText.innerHTML = '<span style="color: var(--warning); font-size: 12px;">⏳ 正在建立 5G 加密連線...</span>';
+    return;
+  }
 
   // Attach one-time pairing token if available
   const fullUrl = currentPairingToken
@@ -1192,33 +1254,77 @@ function updatePublicUrlBanner() {
     banner.style.display = 'block';
     urlText.textContent = fullUrl;
 
-    btnCopy.onclick = () => {
-      navigator.clipboard.writeText(fullUrl);
-      btnCopy.textContent = '已複製!';
-      setTimeout(() => { btnCopy.textContent = '複製'; }, 2000);
-    };
+    if (btnCopy) {
+      btnCopy.onclick = () => {
+        navigator.clipboard.writeText(fullUrl);
+        btnCopy.textContent = '已複製!';
+        setTimeout(() => { btnCopy.textContent = '複製'; }, 2000);
+      };
+    }
+  }
 
-    btnQr.onclick = async () => {
-      if (qrModal.style.display === 'block') {
-        qrModal.style.display = 'none';
-      } else {
-        qrModal.style.display = 'block';
-        try {
-          const res = await fetch(`/api/qr?url=${encodeURIComponent(fullUrl)}`);
-          const data = await res.json();
-          if (data.qr) qrImage.src = data.qr;
-        } catch (e) {
-          console.error('Failed to load QR:', e);
-        }
-      }
-    };
+  const qrModal = document.getElementById('qr-modal');
+  if (qrModal && qrModal.style.display === 'block') {
+    renderQrCode();
   }
 }
+
+function updateLocalWifiBanner() {
+  if (!localWifiUrl) return;
+  const localRow = document.getElementById('local-wifi-row');
+  const localText = document.getElementById('local-url-text');
+  const btnCopyLocal = document.getElementById('btn-copy-local');
+
+  const fullLocalUrl = currentPairingToken
+    ? `${localWifiUrl}/?token=${currentPairingToken}`
+    : localWifiUrl;
+
+  if (localRow && localText) {
+    localRow.style.display = 'block';
+    localText.textContent = fullLocalUrl;
+
+    if (btnCopyLocal) {
+      btnCopyLocal.onclick = () => {
+        navigator.clipboard.writeText(fullLocalUrl);
+        btnCopyLocal.textContent = '已複製!';
+        setTimeout(() => { btnCopyLocal.textContent = '複製'; }, 2000);
+      };
+    }
+  }
+}
+
+async function renderQrCode() {
+  const qrImage = document.getElementById('qr-image');
+  if (!qrImage) return;
+
+  const targetBase = publicTunnelUrl || localWifiUrl;
+  if (!targetBase) return;
+
+  const targetUrl = currentPairingToken
+    ? `${targetBase}/?token=${currentPairingToken}`
+    : targetBase;
+
+  try {
+    const res = await fetch(`/api/qr?url=${encodeURIComponent(targetUrl)}`);
+    const data = await res.json();
+    if (data.qr) qrImage.src = data.qr;
+  } catch (e) {
+    console.error('Failed to load QR:', e);
+  }
+}
+
+window.setTunnelReconnecting = function() {
+  const urlText = document.getElementById('public-url-text');
+  if (urlText) {
+    urlText.innerHTML = '<span style="color: var(--warning); font-size: 12px;">⏳ 正在重新建立 5G 加密連線...</span>';
+  }
+};
 
 window.setPublicUrlJSON = function(payload) {
   if (payload && payload.url) {
     publicTunnelUrl = payload.url;
     updatePublicUrlBanner();
+    updateLocalWifiBanner();
   }
 };
 
@@ -1226,6 +1332,7 @@ window.setPublicUrl = function(url) {
   if (!url) return;
   publicTunnelUrl = url;
   updatePublicUrlBanner();
+  updateLocalWifiBanner();
 };
 
 // Start
